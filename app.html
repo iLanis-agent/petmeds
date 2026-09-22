@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PetMeds</title>
+<style>
+  :root { --bg:#f5f7f5; --card:#fff; --ink:#243022; --muted:#7c877a; --teal:#2e7d6b; --green:#3d8a4f; --amber:#c98a1e; --red:#c0453e; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:ui-sans-serif,system-ui,sans-serif; background:var(--bg); color:var(--ink); }
+  header { padding:20px 24px 8px; }
+  h1 { margin:0; font-size:1.5rem; }
+  .sub { color:var(--muted); margin:4px 0 0; font-size:.9rem; }
+  main { max-width:720px; margin:0 auto; padding:12px 16px 40px; }
+  form { background:var(--card); border-radius:12px; padding:14px; display:flex; gap:8px; flex-wrap:wrap; align-items:end; margin-bottom:14px; box-shadow:0 1px 4px rgba(0,0,0,.06); }
+  label { font-size:.75rem; color:var(--muted); display:block; margin-bottom:3px; }
+  input, button { font:inherit; padding:8px 10px; border:1px solid #d4dcd2; border-radius:8px; background:#fff; }
+  input[type=text] { width:130px; }
+  input[type=number] { width:90px; }
+  button { background:var(--teal); color:#fff; border:none; cursor:pointer; }
+  button.ghost { background:#e7ede6; color:var(--ink); }
+  .card { background:var(--card); border-radius:12px; padding:14px 16px; margin-bottom:10px; box-shadow:0 1px 4px rgba(0,0,0,.06); }
+  .row { display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; }
+  .name { font-weight:600; font-size:1.05rem; }
+  .pet { color:var(--muted); font-size:.85rem; font-weight:400; }
+  .badge { font-size:.72rem; font-weight:700; padding:3px 10px; border-radius:999px; text-transform:uppercase; }
+  .b-ok { background:#e0f0e2; color:#2e6b2e; }
+  .b-order { background:#fbf0da; color:#9a6b12; }
+  .b-critical, .b-out { background:#fae2e1; color:#b23834; }
+  .meta { font-size:.85rem; color:var(--muted); margin-top:6px; }
+  .runout { font-weight:600; }
+  .runout.warn { color:var(--amber); }
+  .runout.bad { color:var(--red); }
+  .actions { display:flex; gap:6px; margin-top:10px; flex-wrap:wrap; }
+  .actions button { padding:6px 12px; font-size:.85rem; }
+  .actions input { width:80px; padding:6px 8px; font-size:.85rem; }
+  .empty { text-align:center; color:var(--muted); padding:40px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>PetMeds</h1>
+  <p class="sub">Never run out of the pet's pills again. Log doses, and the app projects the exact runout date from what's left in the bottle.</p>
+</header>
+<main>
+  <form id="add-form">
+    <div><label>Pet</label><input type="text" id="f-pet" placeholder="Rex" required maxlength="24"></div>
+    <div><label>Medication</label><input type="text" id="f-name" placeholder="Apoquel" required maxlength="40"></div>
+    <div><label>Pills/dose</label><input type="number" id="f-ppd" min="0.25" step="0.25" value="1" required></div>
+    <div><label>Doses/day</label><input type="number" id="f-dpd" min="0.25" step="0.25" value="1" required></div>
+    <div><label>Pills on hand</label><input type="number" id="f-pills" min="0" step="1" placeholder="30" required></div>
+    <button type="submit">Add med</button>
+  </form>
+  <div id="list"></div>
+</main>
+<script src="engine.js"></script>
+<script>
+(function () {
+  var KEY = 'petmeds-v1';
+  function today() { return new Date().toISOString().slice(0, 10); }
+  function load() { try { return JSON.parse(localStorage.getItem(KEY)) || []; } catch (e) { return []; } }
+  function save() { localStorage.setItem(KEY, JSON.stringify(meds)); }
+  var meds = load();
+
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+  var BCLASS = { 'ok': 'b-ok', 'order soon': 'b-order', 'critical': 'b-critical', 'out': 'b-out' };
+
+  function render() {
+    var wrap = document.getElementById('list');
+    wrap.innerHTML = '';
+    if (!meds.length) {
+      wrap.innerHTML = '<div class="empty">No medications yet. Add one - the runout math starts immediately.</div>';
+      return;
+    }
+    var sorted = meds.slice().sort(function (a, b) { return PetMeds.daysLeft(a) - PetMeds.daysLeft(b); });
+    sorted.forEach(function (m) {
+      var st = PetMeds.status(m);
+      var dl = PetMeds.daysLeft(m);
+      var runout = PetMeds.runoutDate(m, today());
+      var card = el('div', 'card');
+      var top = el('div', 'row');
+      var left = el('div');
+      left.appendChild(el('span', 'name', m.name));
+      left.appendChild(el('span', 'pet', ' for ' + m.pet));
+      top.appendChild(left);
+      top.appendChild(el('span', 'badge ' + BCLASS[st], st));
+      card.appendChild(top);
+
+      var meta = el('div', 'meta');
+      meta.textContent = m.pillsOnHand + ' pills left - ' + m.pillsPerDose + '/dose x ' + m.dosesPerDay + '/day = ' + PetMeds.dailyUse(m) + '/day';
+      card.appendChild(meta);
+      var ro = el('div', 'meta');
+      var span = el('span', 'runout' + (st === 'critical' || st === 'out' ? ' bad' : st === 'order soon' ? ' warn' : ''));
+      span.textContent = st === 'out' ? 'Out - cannot give a full dose' : 'Runs out ' + runout + ' (' + dl + ' day' + (dl === 1 ? '' : 's') + ')';
+      ro.appendChild(span);
+      card.appendChild(ro);
+
+      var act = el('div', 'actions');
+      var give = el('button', null, 'Give dose');
+      give.onclick = function () {
+        try { PetMeds.giveDose(m, today()); }
+        catch (e) { alert(e.message); return; }
+        save(); render();
+      };
+      act.appendChild(give);
+      var rin = el('input'); rin.type = 'number'; rin.min = 1; rin.placeholder = '+ pills';
+      act.appendChild(rin);
+      var rb = el('button', 'ghost', 'Refill');
+      rb.onclick = function () {
+        try { PetMeds.refill(m, rin.value); }
+        catch (e) { alert(e.message); return; }
+        save(); render();
+      };
+      act.appendChild(rb);
+      var del = el('button', 'ghost', 'Remove');
+      del.onclick = function () {
+        if (!confirm('Remove ' + m.name + ' for ' + m.pet + '?')) return;
+        PetMeds.removeMed(meds, m.id); save(); render();
+      };
+      act.appendChild(del);
+      card.appendChild(act);
+      wrap.appendChild(card);
+    });
+  }
+
+  document.getElementById('add-form').onsubmit = function (e) {
+    e.preventDefault();
+    try {
+      PetMeds.addMed(meds,
+        document.getElementById('f-pet').value,
+        document.getElementById('f-name').value,
+        document.getElementById('f-ppd').value,
+        document.getElementById('f-dpd').value,
+        document.getElementById('f-pills').value);
+    } catch (err) { alert(err.message); return; }
+    ['f-pet','f-name','f-pills'].forEach(function (id) { document.getElementById(id).value = ''; });
+    save(); render();
+  };
+  render();
+})();
+</script>
+</body>
+</html>
